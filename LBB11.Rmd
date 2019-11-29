@@ -1,0 +1,279 @@
+---
+title: "LBB11"
+author: "Yvonne Lam"
+date: "11/7/2019"
+output: 
+  html_document:
+    toc: TRUE
+    toc_float:
+      collapsed: FALSE
+    number_sections: FALSE
+    theme: cosmo
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Report 
+
+The objective of this document is to demonstrate the use of a simple neural network model in classifying handwritten letters that comes in the form of 28 by 28 pixel-sized images.
+
+## Analysis
+
+Data was read and formatted for model fitting. 
+```{r}
+library(plyr)
+#DATA PREP
+
+#read data
+letters_train <- read.csv("lettersmnist/emnist-letters-train.csv")
+letters_test <- read.csv("lettersmnist/emnist-letters-test.csv")
+
+str(letters_train)
+head(letters_train)
+
+#brightness range of pixel
+range(letters_train[,-1])
+
+#proportion of labels(letters)
+prop.table(table(letters_train[,1]))*100
+
+#check no. of alphabets
+sort(unique(letters_train$X23))
+sort(unique(letters_test$X1))
+
+#reindex the alphabets from 0 to 25 instead of 1 to 26
+letters_train$X23 <- letters_train$X23-1
+letters_test$X1 <- letters_test$X1-1
+
+#convert data to matrix form
+train <- data.matrix(letters_train)
+test <- data.matrix(letters_test)
+
+#strip row and column names
+dimnames(train) <- NULL
+dimnames(test) <- NULL
+
+#separate labels from sets
+train_data <- train[,-1]
+train_labels <- train[,1]
+
+test_data <- test[,-1]
+test_labels <- test[,1]
+
+#rescale data
+train_data <- train_data/255
+test_data <- test_data/255
+
+#one hot encoding on labels
+library(keras)
+train_hot <- to_categorical(train_labels, 26)
+test_hot <- to_categorical(test_labels, 26)
+
+dim(train_hot)
+```
+
+A Convolutional Neural Network(CNN) is used to classify images of the handwritten letters. Our CNN is designed with 2 hidden layers. The first layer has a random chosen numer of 180 neurons, and the second with a random chosen number of 62 neurons. 10 epochs will be runned through our CNN with a batch size of 120.
+```{r}
+#Define model
+library(dplyr)
+model1 <- keras_model_sequential() %>% 
+  layer_dense(units=180, activation ="relu", input_shape = c(784)) %>% 
+  layer_dense(units=62, activation = "relu") %>% 
+  layer_dense(units=26, activation ="softmax")
+
+summary(model1)
+
+#Compile model
+model1 %>% 
+  compile(loss = "categorical_crossentropy",
+          optimizer = "adam",
+          metrics = "accuracy")
+
+#Train model
+history1 <- model1 %>% 
+  fit(x=train_data,
+      y=train_hot,
+      epoch=10,
+      batch=120,
+      validation_split=0.2)
+
+#plot results
+plot(history1)
+# From the graph, it seems training our model through 3 epochs is enough. We reached 87% accuracy and 41% loss for the model.
+#The loss and accuracy of both traning and validation data diverges after 3 epochs, which means the model starts to overfit the training data, which is not desirable.
+```
+
+
+Even though our CNN model has been cross validated while it was trained, we will further evaluate our model by testing it with unseen data.
+```{r}
+#Evaluate model
+eval <- model1 %>% 
+  evaluate(test_data, test_hot)
+
+prob <- model1 %>% 
+  predict_proba(test_data)
+
+pred_class <- model1 %>% 
+  predict_classes(test_data)
+
+#convert prediction and labels into factors
+pred_class <- factor(pred_class, levels = c(0:25))
+test_labels <- factor(test_labels, levels =c(0:25))
+caret::confusionMatrix(pred_class, test_labels)
+
+
+pred_alph <- mapvalues(pred_class, from=c(0:25), to=c("A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","X","Y","Z"))
+pred_alph <- as.character(pred_alph)
+
+actual_alph <- mapvalues(test_labels, from=c(0:25), to=c("A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","X","Y","Z"))
+actual_alph <- as.character(actual_alph)
+
+#look at some misclassified letters
+model_viz <- cbind(pred_class, pred_alph, test_labels, actual_alph)
+head(model_viz[pred_class != test_labels, ],20)
+
+#look at corresponding predicted probability of letters
+model_prob <- cbind(round(prob,2), pred_class, test_labels)
+head(model_prob[pred_class != test_labels, ], 20)
+```
+
+# Summary
+
+Testing of the unseen data on the model yields 87.7% accuracy, which is very close to the model's accuracy during the training phase. Also, after looking at some the misclassified images, the overall structure of a few misclassified letters are somewhat similar to the actual letter form. Hence, the model performed well in classifying majority of the handwritten images.  
+
+
+
+
+# LBB Task
+
+Using the keras package, present a simple R Markdown document to demonstrate neural network modelling.
+
+The data for this LBB can be downloaded from the LBB Assignment item in Google Classroom. There are two different data sets for you to work on. Please choose one.
+“fashionmnist” contains train and test set of 10 different categories for 28 x 28 pixel-sized images of fashion apparel
+Use the following code to assign category names for the labels
+
+categories <- c("T-shirt", "Trouser", "Pullover", "Dress",
+"Coat", "Sandal", "Shirt", "Sneaker", "Bag", "Boot")
+
+“lettersmnist” contains train and test set of 26 different categories for 28 x 28 pixel-sized handwritten images of alphabets
+
+Students should be awarded full points if:
+Document demonstrates student’s ability in data preparation.
+Document shows student’s ability to design neural network layer design for input, hidden, output layer, and activation functions.
+Document shows cross validation method and model evaluation.
+
+# Full Code
+
+```{r, eval=FALSE}
+library(plyr)
+#DATA PREP
+
+#read data
+letters_train <- read.csv("lettersmnist/emnist-letters-train.csv")
+letters_test <- read.csv("lettersmnist/emnist-letters-test.csv")
+
+str(letters_train)
+head(letters_train)
+
+#brightness range of pixel
+range(letters_train[,-1])
+
+#proportion of labels(letters)
+prop.table(table(letters_train[,1]))*100
+
+#check no. of alphabets
+sort(unique(letters_train$X23))
+sort(unique(letters_test$X1))
+
+#reindex the alphabets from 0 to 25 instead of 1 to 26
+letters_train$X23 <- letters_train$X23-1
+letters_test$X1 <- letters_test$X1-1
+
+#convert data to matrix form
+train <- data.matrix(letters_train)
+test <- data.matrix(letters_test)
+
+#strip row and column names
+dimnames(train) <- NULL
+dimnames(test) <- NULL
+
+#separate labels from sets
+train_data <- train[,-1]
+train_labels <- train[,1]
+
+test_data <- test[,-1]
+test_labels <- test[,1]
+
+#rescale data
+train_data <- train_data/255
+test_data <- test_data/255
+
+#one hot encoding on labels
+library(keras)
+train_hot <- to_categorical(train_labels, 26)
+test_hot <- to_categorical(test_labels, 26)
+
+dim(train_hot)
+
+
+#Define model
+library(dplyr)
+model1 <- keras_model_sequential() %>% 
+  layer_dense(units=180, activation ="relu", input_shape = c(784)) %>% 
+  layer_dense(units=62, activation = "relu") %>% 
+  layer_dense(units=26, activation ="softmax")
+
+summary(model1)
+
+#Compile model
+model1 %>% 
+  compile(loss = "categorical_crossentropy",
+          optimizer = "adam",
+          metrics = "accuracy")
+
+#Train model
+history1 <- model1 %>% 
+  fit(x=train_data,
+      y=train_hot,
+      epoch=10,
+      batch=120,
+      validation_split=0.2)
+
+#plot results
+plot(history1)
+
+
+#Evaluate model
+eval <- model1 %>% 
+  evaluate(test_data, test_hot)
+
+prob <- model1 %>% 
+  predict_proba(test_data)
+
+pred_class <- model1 %>% 
+  predict_classes(test_data)
+
+#convert prediction and labels into factors
+pred_class <- factor(pred_class, levels = c(0:25))
+test_labels <- factor(test_labels, levels =c(0:25))
+caret::confusionMatrix(pred_class, test_labels)
+
+
+pred_alph <- mapvalues(pred_class, from=c(0:25), to=c("A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","X","Y","Z"))
+pred_alph <- as.character(pred_alph)
+
+actual_alph <- mapvalues(test_labels, from=c(0:25), to=c("A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","X","Y","Z"))
+actual_alph <- as.character(actual_alph)
+
+#look at some misclassified letters
+model_viz <- cbind(pred_class, pred_alph, test_labels, actual_alph)
+head(model_viz[pred_class != test_labels, ],20)
+
+#look at corresponding predicted probability of letters
+model_prob <- cbind(round(prob,2), pred_class, test_labels)
+head(model_prob[pred_class != test_labels, ], 20)
+```
+

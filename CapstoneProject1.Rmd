@@ -1,0 +1,359 @@
+---
+title: "Ramen Ratings"
+author: "Yvonne Lam"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: fill
+runtime: shiny
+---
+
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(ggplot2)
+library(dplyr)
+library(stringr)
+library(shiny)
+library(shinyWidgets)
+library(leaflet)
+library(plotly)
+library(DT)
+library(tm)
+library(wordcloud)
+library(RColorBrewer)
+
+
+#read data
+ratings <- read.csv("big_list.csv")
+str(ratings)
+
+#clean data
+unique(ratings$Stars)
+ramen_ratings <- ratings %>% 
+  filter(Stars != "Unrated", Stars != "NR", Style != "", Style != "Restaurant")
+
+ramen_ratings$Stars <- droplevels(ramen_ratings$Stars)
+ramen_ratings$Style <- droplevels(ramen_ratings$Style)
+
+ramen_ratings$Stars <- as.numeric(as.character(ramen_ratings$Stars))
+ramen_ratings$Variety <- as.character(ramen_ratings$Variety)
+ramen_ratings$Top.Ten <- as.character(ramen_ratings$Top.Ten)
+ramen_ratings$Country <- as.character(ramen_ratings$Country)
+
+head(ramen_ratings)
+
+#merge similar brand names
+sort(unique(ramen_ratings$Brand))
+
+
+ramen_ratings <- ramen_ratings %>% 
+  mutate(mod_brand = case_when(Brand == "A1" ~ "A-One",
+                               Brand == "ChoripDong" ~ "Chorip Dong",
+                               Brand == "Fashion Foods" ~ "Fashion Food",
+                               Brand == "Goku Uma" ~ "Goku-Uma",
+                               Brand == "Higashi" ~ "Higashimaru",
+                               Brand == "Hua Feng Noodle Expert" ~ "Hua Feng",
+                               Brand == "Kang Shi Fu" ~ "Master Kong",
+                               Brand == "Kiki Noodle" ~ "kiki",
+                               Brand == "Koka" ~ "KOKA",
+                               Brand == "Lau Liu tou" ~ "Lau Liu Tou",
+                               Brand == "Liang Cheng Mai" ~ "Liang Cheng Mei",
+                               Brand == "Liangchengmei" ~ "Liang Cheng Mei",
+                               Brand == "Lishan Food Manufacturing" ~ "Lishan",
+                               Brand == "Mama" ~ "MAMA",
+                               Brand == "Mamee-Shinsegae" ~ "Mamee/Shinsegae",
+                               Brand == "Mamee / Shinsegae" ~ "Mamee/Shinsegae",
+                               Brand == "Mamee Shinsegae" ~ "Mamee/Shinsegae",
+                               Brand == "Mi Sedaap" ~ "Mie Sedaap",
+                               Brand == "Mykuali" ~ "MyKuali",
+                               Brand == "Nissin-Miojo" ~ "Nissin Miojo",
+                               Brand == "Paldo Vina" ~ "Paldo",
+                               Brand == "Peyang" ~ "Peyoung",
+                               Brand == "President Rice" ~ "MAMA",
+                               Brand == "Prima" ~ "Prima Taste",
+                               Brand == "Sakurai Foods" ~ "Sakurai",
+                               Brand == "Samyang Foods" ~ "Samyang",
+                               Brand == "Sao Tao" ~ "Sau Tao",
+                               Brand == "Seven-Eleven" ~ "7 Select/Nissin",
+                               Brand == "7 Select" ~ "7 Select/Nissin",
+                               Brand == "Tablemark" ~ "TableMark",
+                               Brand == "Takamori" ~ "Takamori Kosan",
+                               Brand == "Tseng Noodle" ~ "Tseng Noodles",
+                               Brand == "Tung-I" ~ "Uni-President",
+                               Brand == "Unif" ~ "Uni-President",
+                               Brand == "Unif / Tung-I" ~ "Uni-President",
+                               Brand == "Unif Tung-I" ~ "Uni-President",
+                               Brand == "Weh Lih" ~ "Wei Lih",
+                               Brand == "World O Noodle" ~ "World O' Noodle",
+                               Brand == "Wu Mu" ~ "Wu-Mu",
+                               TRUE ~ as.character(Brand))
+         )
+
+unique(sort(ramen_ratings$mod_brand))
+
+#rename brand columns
+names(ramen_ratings)
+colnames(ramen_ratings)[2] <- "OG_brand"
+colnames(ramen_ratings)[8] <- "Brand"
+
+```
+
+
+```{r}
+#fix the country entries on ramen_ratings df
+ramen_ratings$Country <- str_replace(ramen_ratings$Country, "Dubai", "United Arab Emirates")
+ramen_ratings$Country <- str_replace(ramen_ratings$Country, "Holland", "Netherlands")
+ramen_ratings$Country <- str_replace(ramen_ratings$Country, "Sarawak", "Malaysia")
+ramen_ratings$Country <- str_replace(ramen_ratings$Country, "UK", "United Kingdom")
+ramen_ratings$Country <- str_replace(ramen_ratings$Country, "USA", "United States")
+
+
+```
+
+
+
+Sidebar {.sidebar data-width=300}
+=============
+
+### Dropdown Menu
+```{r}
+pickerInput(inputId = "dropdown_countries",label = "Select countries:", 
+            choices = sort(unique(ramen_ratings$Country)), select = "Australia",
+            multiple = TRUE, options = list('actions-box' = TRUE))
+
+#global filtered dataframe
+filtered_df <- reactive({
+  ramen_ratings %>% 
+  filter(Stars >= input$slider_ratings[1], Stars <= input$slider_ratings[2],
+         Style %in% input$checkbox_packagingstyle,
+         Country %in% input$dropdown_countries)
+})
+```
+
+
+### Checkbox
+```{r}
+checkboxGroupInput(inputId = "checkbox_packagingstyle", label = "Choose packaging style:", choices = sort(unique(ramen_ratings$Style)), select = "Pack")
+```
+
+### Ratings Slider
+
+```{r}
+sliderInput(inputId = "slider_ratings",label = "Select rating range:",min = 0.0, max = 5.0, value = c(3.0,4.0), step = 0.125)
+```
+
+Plots
+===
+
+Column {.tabset data-width=700}
+--------------
+
+### How to Use
+
+This dashboard is based on the open data available from the Ramen Rater website (https://www.theramenrater.com/resources-2/the-list/). The data is a compilation of instant noodles reviews from the Ramen Rater website.  
+  
+The global sidebar can be used to filter the data(instant noodles reviews) according to user inputs (countries selected, ramen packaging style and its ratings). In this context, **countries** refer to the main consumer markets which the brands target. The **ratings** refer to the number of Stars, out of a possible 5, which the reviewer has given to that particular instant noodle product.  
+
+This dashboard has 2 Column Charts, 1 World Map, 1 Word Cloud and 1 Data Table.  
+**Column charts**  
+1. Ratings per Country: shows how well the average product fares against other countries' instant noodles  
+2. Brands per Country: indicates the relative demand & supply of instant noodles in that market  
+**World Map**: shows the brands found in a country on a visual world map  
+**Word Cloud**: shows frequency of instant noodle brands    
+**Data Table**: full details of the selected data are listed out
+
+
+*updated 30/9/2019*
+
+### Ratings per Country
+```{r}
+
+#average rating by country of filtered df
+ratings_vs_country <- reactive({
+  filtered_df() %>%  
+  group_by(Country) %>%
+  summarise(avg_rating = mean(Stars)) %>% 
+  ungroup()
+})
+
+#global average rating-fixed value
+avg_rating_overall <- ramen_ratings %>% 
+  group_by(Country) %>%
+  summarise(avg_rating = mean(Stars)) %>% 
+  ungroup()
+avg_rating_overall <- mean(avg_rating_overall$avg_rating)
+
+#plot ratings vs country
+countryplot <- reactive({
+  ratings_vs_country() %>% 
+  mutate(diff = avg_rating - avg_rating_overall) %>% 
+  mutate(highlow = ifelse(diff > 0, "high", "low"))
+})
+
+renderPlotly(
+plot_ly(countryplot(),
+          y= ~reorder(Country,avg_rating),
+          x= ~avg_rating, 
+          type= ~"bar", color=~highlow,
+          orientation= "h",
+          showlegend= FALSE) %>% 
+  add_trace(x=avg_rating_overall, type= "scatter", mode= "lines+markers", 
+            showlegend=FALSE, marker=list(color="orange")) %>% 
+  layout(title="Ratings vs Country",
+         xaxis= list(title="Average Rating (Stars)"),
+         yaxis= list(title="Country", dtick =1))
+)
+
+```
+
+### Brands per Country
+```{r}
+#no. of brands vs country
+
+#group brands by country from filtered df
+brands_vs_country <- reactive({
+  filtered_df() %>% 
+  group_by(Country) %>%
+  summarise(count = n_distinct(Brand), brand_list = Brand %>% unique %>% sort %>% paste(collapse = ", ")) %>% 
+  ungroup()
+})
+
+renderPlotly(
+ggplot(brands_vs_country(), aes(x= reorder(Country,count),y= count))+
+  geom_col()+
+  labs(title="No. of Brands per Country", x="Target Market (Country)", y="No. of Brands")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 45, hjust= 1))
+)
+```
+
+
+Column {data-width=300}
+---------------
+
+### Total Reviews (ValueBox)
+```{r}
+renderValueBox(
+valueBox(value = filtered_df() %>% count(),
+         caption= "Total Reviews",
+         icon= "fa-pen",
+         color = "skyblue")
+)
+```
+
+### valuebox2
+```{r}
+valueBox(value = signif(avg_rating_overall, 3),
+         caption= "Global Average Rating",
+         icon= "fa-star",
+         color = "orange")
+```
+
+
+World Map
+===
+
+### Map
+
+```{r}
+countries_coords <- read.csv("countries-geog-coordinates.csv", stringsAsFactors = FALSE)
+countries_coords$name[[143]] <- "Myanmar"
+
+#filter out redundant country coordinates
+ramen_countries <- countries_coords %>% 
+  filter(name %in% ramen_ratings$Country) %>% 
+  select(c(4,3,2))
+
+#check no. of countries are correct after filtering (all_ctry is complete list, ramen_countries is not)
+all_ctry <- sort(unique(ramen_ratings$Country))
+
+#combine coords df with brands_vs_country df
+countries_brands <- reactive({
+  merge(ramen_countries, brands_vs_country(), by.x="name", by.y="Country")
+})
+
+renderLeaflet(
+leaflet() %>% 
+  addProviderTiles("Esri.WorldStreetMap") %>%
+  addCircleMarkers(lng = ramen_countries$longitude,
+             lat = ramen_countries$latitude,
+             label = ramen_countries$name) %>% 
+  addMarkers(lng = countries_brands()$longitude,
+                   lat = countries_brands()$latitude,
+                   popup = paste(countries_brands()$name, "<br>",
+                                 "No. of Brands:", countries_brands()$count, "<br>",
+                                 "Brands: ", countries_brands()$brand_list))
+)
+```
+
+Word Cloud
+===
+
+Column
+-------
+
+### Word Cloud
+```{r}
+ramen_brands <- reactive({
+  filtered_df() %>% 
+    group_by(Brand) %>% 
+    summarise(count = n())
+})
+
+renderPlot({
+wordcloud(words = ramen_brands()$Brand, freq = ramen_brands()$count, min.freq= 1, 
+          random.order= FALSE, max.words= 200, rot.per= 0.35, colors = brewer.pal(8, "Dark2"))
+})
+```
+
+Column {data-width=200}
+------
+
+### Details
+This word cloud shows the frequency of instant noodle brands; how many products they have.  
+  
+Most frequent 5 brands (global):  
+1. Nissin  
+2. Nongshim  
+3. Maruchan  
+4. Samyang  
+5. MAMA  
+
+Data Table {data-navmenu=More}
+===
+
+### Data Table
+```{r}
+
+renderDataTable(
+datatable(filtered_df() %>% 
+             select(c(8,3,4,5,6))
+          )
+)
+```
+
+
+Project Task {data-navmenu=More}
+===
+
+### Details
+
+Dear Participants,
+
+Congratulations! You have almost finished the Data visualization track. Here are the rubrics for your final project :
+
+1. Input (reactivity) : 6 points
+2. Tab (paging) : 6 points
+3. Render plot (ggplot/leaflet/plotly) : 6 points
+4. Deploy : 6 points
+5. UI Appearence : 6 points
+Total : 30 points
+
+IMPORTANT: If your LBB for "Interactive Plotting" (last week's module) fulfills most of the criteria above, you may re-use it for the capstone. Remember to add-on those items that were not in your IP LBB (eg: IP did not require "Deploy" using Shinyapp)
+
+This capstone contains the bulk of your marks in the Data Visualization track (30 out of 40). Therefore, you must complete the Capstone project as well as the previous LBBs. Please submit the files to this Capstone project by Monday 30 Sep 2019.
+
+If you're using your own data set, please upload your data set in google drive as well. (You may also anonymize your data if your data is sensitive).
+
+Good luck!

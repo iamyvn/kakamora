@@ -1,0 +1,261 @@
+---
+title: "Ramen Ratings"
+author: "Yvonne Lam"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: fill
+runtime: shiny
+---
+
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(ggplot2)
+library(dplyr)
+library(stringr)
+library(shiny)
+library(shinyWidgets)
+library(leaflet)
+library(plotly)
+library(DT)
+library(rsconnect)
+
+#read data
+ratings <- read.csv("ramen-ratings.csv")
+str(ratings)
+
+#clean data
+unique(ratings$Stars)
+ramen_ratings <- ratings %>% 
+  filter(Stars != "Unrated", Style != "")
+
+ramen_ratings$Style <- droplevels(ramen_ratings$Style)
+
+ramen_ratings$Stars <- as.numeric(as.character(ramen_ratings$Stars))
+ramen_ratings$Variety <- as.character(ramen_ratings$Variety)
+ramen_ratings$Top.Ten <- as.character(ramen_ratings$Top.Ten)
+ramen_ratings$Country <- as.character(ramen_ratings$Country)
+
+head(ramen_ratings)
+
+```
+
+
+```{r}
+#fix the country entries on ramen_ratings df
+ramen_ratings$Country <- str_replace(ramen_ratings$Country, "Dubai", "United Arab Emirates")
+ramen_ratings$Country <- str_replace(ramen_ratings$Country, "Holland", "Netherlands")
+ramen_ratings$Country <- str_replace(ramen_ratings$Country, "Sarawak", "Malaysia")
+ramen_ratings$Country <- str_replace(ramen_ratings$Country, "UK", "United Kingdom")
+ramen_ratings$Country <- str_replace(ramen_ratings$Country, "USA", "United States")
+
+
+```
+
+
+
+Sidebar {.sidebar data-width=300}
+=============
+
+### Dropdown Menu
+```{r}
+pickerInput(inputId = "dropdown_countries",label = "Select countries:", 
+            choices = sort(unique(ramen_ratings$Country)), 
+            multiple = TRUE, options = list('actions-box' = TRUE))
+
+#global filtered dataframe
+filtered_df <- reactive({
+  ramen_ratings %>% 
+  filter(Stars >= input$slider_ratings[1], Stars <= input$slider_ratings[2],
+         Style %in% input$checkbox_packagingstyle,
+         Country %in% input$dropdown_countries)
+})
+```
+
+
+### Checkbox
+```{r}
+checkboxGroupInput(inputId = "checkbox_packagingstyle", label = "Choose packaging style:", choices = sort(unique(ramen_ratings$Style)), select = "Pack")
+```
+
+### Ratings Slider
+
+```{r}
+sliderInput(inputId = "slider_ratings",label = "Select rating range:",min = 0.0, max = 5.0, value = c(3.0,4.0), step = 0.125)
+```
+
+Plots
+===
+
+Column {.tabset data-width=700}
+--------------
+
+### How to Use
+
+This dashboard is based on the open data available from the Ramen Rater website (https://www.theramenrater.com/resources-2/the-list/). The data is a compilation of instant noodles reviews all from one person.  
+  
+The global sidebar can be used to filter the data(instant noodles reviews) according to user inputs (countries selected, ramen packaging style and its ratings). In this context, **countries** refer to the main consumer markets which the brands target. The **ratings** refer to the number of Stars, out of a possible 5, which the reviewer has given to that particular instant noodle product.  
+
+This dashboard has 2 Column Charts, 1 World Map and 1 Data Table.  
+**Column charts**  
+1. Ratings per Country: shows how well the average product fares against other countries' instant noodles  
+2. Brands per Country: indicates the relative demand & supply of instant noodles in that market  
+**World Map**: shows the brands found in a country on a visual world map  
+**Data Table**: full details of the selected data are listed out
+
+### Ratings per Country
+```{r}
+
+#average rating by country of filtered df
+ratings_vs_country <- reactive({
+  filtered_df() %>%  
+  group_by(Country) %>%
+  summarise(avg_rating = mean(Stars)) %>% 
+  ungroup()
+})
+
+#global average rating-fixed value
+avg_rating_overall <- ramen_ratings %>% 
+  group_by(Country) %>%
+  summarise(avg_rating = mean(Stars)) %>% 
+  ungroup()
+avg_rating_overall <- mean(avg_rating_overall$avg_rating)
+
+#plot ratings vs country
+countryplot <- reactive({
+  ratings_vs_country() %>% 
+  mutate(diff = avg_rating - avg_rating_overall) %>% 
+  mutate(highlow = ifelse(diff > 0, "high", "low"))
+})
+
+renderPlotly(
+plot_ly(countryplot(),
+          y= ~reorder(Country,avg_rating),
+          x= ~avg_rating, 
+          type= ~"bar", color=~highlow,
+          orientation= "h",
+          showlegend= FALSE) %>% 
+  add_trace(x=avg_rating_overall, type= "scatter", mode= "lines+markers", 
+            showlegend=FALSE, marker=list(color="orange")) %>% 
+  layout(title="Ratings vs Country",
+         xaxis= list(title="Average Rating (Stars)"),
+         yaxis= list(title="Country", dtick =1))
+)
+
+```
+
+### Brands per Country
+```{r}
+#no. of brands vs country
+
+#group brands by country from filtered df
+brands_vs_country <- reactive({
+  filtered_df() %>% 
+  group_by(Country) %>%
+  summarise(count = n_distinct(Brand), brand_list = Brand %>% unique %>% sort %>% paste(collapse = ", ")) %>% 
+  ungroup()
+})
+
+renderPlotly(
+ggplot(brands_vs_country(), aes(x= reorder(Country,count),y= count))+
+  geom_col()+
+  labs(title="No. of Brands per Country", x="Target Market (Country)", y="No. of Brands")+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 45, hjust= 1))
+)
+```
+
+
+Column {data-width=300}
+---------------
+
+### Total Reviews (ValueBox)
+```{r}
+renderValueBox(
+valueBox(value = filtered_df() %>% count(),
+         caption= "Total Reviews",
+         icon= "fa-pen",
+         color = "skyblue")
+)
+```
+
+### valuebox2
+```{r}
+valueBox(value = signif(avg_rating_overall, 3),
+         caption= "Global Average Rating",
+         icon= "fa-star",
+         color = "orange")
+```
+
+
+World Map
+===
+
+### Map
+
+```{r}
+countries_coords <- read.csv("countries-geog-coordinates.csv", stringsAsFactors = FALSE)
+countries_coords$name[[143]] <- "Myanmar"
+
+#filter out redundant country coordinates
+ramen_countries <- countries_coords %>% 
+  filter(name %in% ramen_ratings$Country) %>% 
+  select(c(4,3,2))
+
+#check no. of countries are correct after filtering (all_ctry is complete list, ramen_countries is not)
+all_ctry <- sort(unique(ramen_ratings$Country))
+
+#combine coords df with brands_vs_country df
+countries_brands <- reactive({
+  merge(ramen_countries, brands_vs_country(), by.x="name", by.y="Country")
+})
+
+renderLeaflet(
+leaflet() %>% 
+  addProviderTiles("Esri.WorldStreetMap") %>%
+  addCircleMarkers(lng = ramen_countries$longitude,
+             lat = ramen_countries$latitude,
+             label = ramen_countries$name) %>% 
+  addMarkers(lng = countries_brands()$longitude,
+                   lat = countries_brands()$latitude,
+                   popup = paste(countries_brands()$name, "<br>",
+                                 "No. of Brands:", countries_brands()$count, "<br>",
+                                 "Brands: ", countries_brands()$brand_list))
+)
+```
+
+Data Table {data-navmenu=More}
+===
+
+### Data Table
+
+```{r}
+
+renderDataTable(
+datatable(filtered_df() %>% 
+             select(c(2,3,4,5,6))
+          )
+)
+```
+
+LBB Task {data-navmenu=More}
+===
+
+### Details
+
+Dear Participants,
+Congratulations! You have completed "Interactive Plotting" workshop. In addition, please kindly complete the "Learn-By-Building: Interactive Plotting".
+
+You have to create your own interactive dashboard (flexdashboard/shiny/shiny dashboard) and submit it as your final project for this workshop. Here are further details regarding your "Learn-By-Building: Interactive Plotting":
+
+a. Use dataset we covered in class or your own dataset (open data from internet or etc).
+
+b. Create an interactive dashboard (flexdashboard/shiny/shiny dashboard/ interactive document) by applying what you’ve learned in the workshop (dplyr, plotly), you can apply any theme to your web dashboard.
+
+The web dashboard must feature an input panel that accepts end user inputs and render the output accordingly.
+
+If you're using your own case dataset, please upload your data in google drive and also send us the link. (you may also anonymizes if you find your data is sensitive)
+
+After you finished your assignment, please submit your file and link (if you publish your dashboard) here.
+
